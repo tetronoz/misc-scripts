@@ -5,18 +5,25 @@ use strict;
 use LWP::UserAgent;
 use HTTP::Cookies;
 use HTTP::Request::Common;
-#use JSON;
+use JSON;
 use HTTP::Status;
 use File::Copy;
-use Data::Dumper;
-use XML::Simple;
+use File::Path;
+#use Data::Dumper;
+#use XML::Simple;
+use XML::LibXML;
 use Getopt::Std;
  
 $ENV{PERL_LWP_SSL_VERIFY_HOSTNAME} = 0;
  
 my $username      = "";
+my $prod_password = '';
+#my $uat_password  = "";
+my $uat_password  = '';
+my $dr_password   = '';
 my $overwrite     = 1;
 our $dbg          = 0;
+my $unpackDirBase = "/home/scbsync";
 my $unpackDir     = "";
 my %options       = ();
 my %env           = (
@@ -26,10 +33,12 @@ my %env           = (
   'prod_password' => '',
   'dr_password'   => '',
   'uat_password'  => '', );
+#my ($refid_d);
+#my ($refid_d);
  
 getopts("ds:e:", \%options);
  
-if ((!defined $options{d} && !defined $options{s}) || (defined $options{d} && defined $options{s}) || (defined $options{d} && !$options{e} !~ m/^uat$|^dr$|^prod$/i)) {
+if ((!defined $options{d} && !defined $options{s}) || (defined $options{d} && defined $options{s}) || (defined $options{d} && $options{e} !~ m/^uat$|^dr$|^prod$/i)) {
   usage();
 }
  
@@ -47,9 +56,9 @@ sub usage
 sub unpackConfig
 {
   if ($_[0] =~ /prod/) {
-    $unpackDir = ".__tar";
+    $unpackDir = $unpackDirBase."/.__tar";
   } elsif ($_[0] =~ /dr/) {
-    $unpackDir = ".__drtar";
+    $unpackDir = $unpackDirBase."/.__drtar";
   }
  
   die "Unpack directory variable is not set." unless length($unpackDir) > 0;
@@ -58,6 +67,61 @@ sub unpackConfig
   chdir($unpackDir);
   system("gunzip ../export.tgz && tar xpf ../export.tar ./xml/scb.xml > /dev/null 2>&1");
   chdir("..");
+ 
+}
+ 
+sub compareProdWithDrXML
+{
+  if ($options{e} =~ m/^prod$/i) {
+    if (! -e "/home/scbsync/drscb/scb.xml$day$mon$year") {
+      print "DR scb.xml for ".$day." ".$mon." ".$year." in /home/scbsync/drscb doesn't exist\n";
+      export_config($env{"dr_host"}, $username, $env{"dr_password"});
+      unpackConfig("dr");
+      unlink('export.tgz');
+      copy("$unpackDir/xml/scb.xml", "/home/scbsync/drscb/scb.xml$day$mon$year") or die "Couldn't copy scb.xml";
+      rmtree($unpackDir);
+    }
+ 
+    my $pparser = new XML::LibXML;
+    my $pstruct =$pparser->parse_file("/home/scbsync/$options{e}scb/scb.xml$day$mon$year");
+ 
+    foreach my $pel ($pstruct->findnodes('/config/scb/pol_connections/connections')) {
+      if ($pel->getAttribute('proto') =~ /ssh/ && $pel->hasChildNodes()) {
+        my @pchildnodes = $pel->NonBlankChildNodes();
+      }
+    }
+ 
+    my $dparser = new XML::LibXML;
+    my $dstruct =$dparser->parse_file("/home/scbsync/drscb/scb.xml$day$mon$year");
+ 
+    foreach my $del ($dstruct->findnodes('/config/scb/pol_connections/connections')) {
+      if ($del->getAttribute('proto') =~ /ssh/ && $del->hasChildNodes()) {
+        my @dchildnodes = $del->NonBlankChildNodes();
+      }
+    }
+ 
+    if ($#pchildnodes != $#dchildnodes) {
+      print "XML comparison failed. Number of connections doesn't match.";
+ 
+    } else {
+      my @pconnections = ();
+      my @dconnections = ();
+      for (my $i = 0; $i < $#pchildnodes; $i++) {
+        $pconnections[$i] = $pchildnodes[$i];
+        $dconnections[$i] = $dchildnodes[$i]
+      }
+ 
+      @pconnections = sort @pconnections;
+      @dconnections = sort @dconnections;
+ 
+      if (@pconnections !~~ @dconnections) {
+        print "XML comparison failed. Set of SCB connections is different.";
+      }
+ 
+    }
+ 
+  }
+ 
 }
  
 my $cookie_jar = HTTP::Cookies->new(file => "$ENV{'HOME'}/.xcb_cookies.dat", autosave => 1 );
@@ -98,7 +162,7 @@ my ($day, $mon, $year) = (localtime(time))[3, 4, 5];
  
   export_config($env{$options{e}."_host"}, $username, $env{$options{e}."_password"});
   copy('export.tgz',$ENV{'HOME'}."/backup/".$env{$options{e}."_host"}."_".join('-',$day,$mon,$year).".tgz") or die "Couldn't copy Balabit export.tgz to backup\n";
-  unpackConfig ($env{$options{e}});
+  unpackConfig ($options{e});
   unlink('export.tar');
  
   unless (chdir("/home/scbsync/".$options{e}."scb")) {
@@ -107,43 +171,23 @@ my ($day, $mon, $year) = (localtime(time))[3, 4, 5];
   }
  
   my $output = "";
-  copy("/home/scbsync/$unpackDir/xml/scb.xml", "/home/scbsync/".$options{e}."scb/scb.xml$day$mon$year") or die "Couldn't copy scb.xml";
+  copy("$unpackDir/xml/scb.xml", "/home/scbsync/".$options{e}."scb/scb.xml$day$mon$year") or die "Couldn't copy scb.xml";
   if (-e "/home/scbsync/$options{e}scb/scb.xml$yday$ymon$yyear") {
     $output = qx(/usr/bin/diff -u /home/scbsync/$options{e}scb/scb.xml$day$mon$year /home/scbsync/$options{e}scb/scb.xml$yday$ymon$yyear);
   } else {
-    print "No configuration file for the previous day is found. Exiting.\n";
-    exit (1);
-    }
-  print $output."\n";
+	  print "No configuration file for the previous day is found. Exiting.\n";
+    	exit (1);
+	}
+	print $output."\n";
  
-=pod
+ 
   #
-  # If we are dumping PROD then double check that DR config is in sync with PROD
+  # If we are dumping PROD then double check that DR config has the same number of connections,
+  # they are enabled and their names match
   #
-    if ($options{e} =~ m/^prod$/i) {
-      if (! -e "/home/scbsync/drscb/scb.xml$day$mon$year") {
-        print "scb.xml in /home/scbsync/drscb doens't exist\n";
-        export_config($env{"dr_host"}, $username, $env{"dr_password"});
-        mkdir(".__drtar");
-        chdir(".__drtar");
-        system("tar xvf ../export.tgz > /dev/null 2>&1");
-        chdir("..");
-        unlink('export.tgz');
-        system("sed -f /home/scbsync/scb_dr_reverse.rules -i .__drtar/xml/scb.xml");
-        $output = qx(/usr/bin/diff -u /home/scbsync/$options{e}scb/scb.xml$day$mon$year .__drtar/xml/scb.xml);
-      } else {
-        copy("/home/scbsync/drscb/scb.xml$day$mon$year", "/home/scbsync/drscb/scb.xml$day$mon$year"."_tmp") or die "Could't copy /home/scbsync/drscb/scb.xml$day$mon$year";
-        system("sed -f /home/scbsync/scb_dr_reverse.rules -i /home/scbsync/drscb/scb.xml$day$mon$year"."_tmp");
-        $output = qx(/usr/bin/diff -u /home/scbsync/$options{e}scb/scb.xml$day$mon$year /home/scbsync/drscb/scb.xml$day$mon$year"_tmp");
-      }
+  compareProdWithDrXML();
  
-      print $output."\n";
- 
-      system("rm -rf .__drtar");
-    }
-=cut
- 
-  system("rm -rf $unpackDir");
+  rmtree($unpackDir);
 }
  
 # Syncing config
@@ -165,13 +209,15 @@ if (defined($options{s}) && $options{s} =~ m/(^uat|^prod|^dr),\s*(prod|uat|dr)$/
   debug(4, "Changing tar content");
   chmod 0644, "$unpackDir/xml/scb.xml";
   chdir("$unpackDir");
+  #system("tar cvfz ../$dest_cfg . > /dev/null 2>&1");
   system("tar -uf ../export.tar ./xml/scb.xml > /dev/null 2>&1");
-  system("gzip ../export.tar")
+  system("gzip ../export.tar");
   chdir("..");
   copy("export.tar.gz", $dest_cfg) or die "Couldn't copy export.tar.gz to $dest_cfg";
   system("rm -rf $unpackDir && rm export.tar.gz");
  
   debug(2, '\nLogging in to $env{$dest."_host"} as $username');
+  print "Logging in to ".$env{$dest."_host"}." as $username";
   my $post = "https://".$env{$dest."_host"}."/index.php?_backend=Auth";
   my $req_login = HTTP::Request->new(POST => $post);
   $req_login->content_type('application/x-www-form-urlencoded');
@@ -183,7 +229,7 @@ if (defined($options{s}) && $options{s} =~ m/(^uat|^prod|^dr),\s*(prod|uat|dr)$/
     print(STDERR "ERROR\n". Dumper($res_login));
   }
  
-  debug(2, 'Fething reference ID from $env{$dest.'_host'}');
+  debug(2, 'Fething reference ID from $env{$dest."_host"}');
   my $get = "https://".$env{$dest."_host"}."/index.php?_backend=BasicSystem";
   my $req_basicsys = HTTP::Request->new(GET => $get);
   my $res_basicsys = $ua->request($req_basicsys);
