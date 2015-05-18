@@ -29,12 +29,12 @@ my $mon           = "";
 my $year          = "";
 my %options       = ();
 my %env           = (
-  'prod_host'     => 'smsk01se10.corp.vtbcapital.internal',
-  'uat_host'      => 'slon02uatse15.dom1.vtbcuat.local',
-  'dr_host'       => 'smsk02se10.corp.vtbcapital.internal',
-  'prod_password' => 'vendor_noisy$oasis',
-  'dr_password'   => 'vendor_noisy$oasis',
-  'uat_password'  => 'vendor_noisy$oasis', );
+  'prod_host'     => '',
+  'uat_host'      => '',
+  'dr_host'       => '',
+  'prod_password' => '',
+  'dr_password'   => '',
+  'uat_password'  => '', );
 #my ($refid_d);
 #my ($refid_d);
 
@@ -85,7 +85,7 @@ sub compareProdWithDrXML
       export_config($env{"dr_host"}, $username, $env{"dr_password"});
       unpackConfig("dr");
       chdir("/home/scbsync");
-      unlink('export.tar');
+      unlink('export.tgz');
       copy("$unpackDir/xml/scb.xml", "/home/scbsync/drscb/scb.xml$day$mon$year") or die "Couldn't copy scb.xml";
       rmtree($unpackDir);
     }
@@ -109,7 +109,7 @@ sub compareProdWithDrXML
     }
 
     if ($#pchildnodes != $#dchildnodes) {
-      print "XML comparison failed. Number of connections doesn't match.\n";
+      print "XML comparison between PROD and DR failed. Number of connections in PROD and DR doesn't match.\n";
 
     } else {
       for (my $i = 0; $i < $#pchildnodes; $i++) {
@@ -121,12 +121,12 @@ sub compareProdWithDrXML
       %dconnections = sort %dconnections;
 
       if (!(%pconnections ~~ %dconnections)) {
-          print "XML comparison failed. Set of SCB connections is different.\n";
+        print "XML comparison between PROD and DR failed. Set of SCB connections in PROD and DR is different.\n";
 
       } else {
         foreach my $key (keys %pconnections) {
           if ($pconnections{$key} != $dconnections{$key}) {
-            print "XML comparison failed (key phase). Set of SCB connections is different.\n";
+            print "XML comparison between PROD and DR failed (key phase). Set of enabled SCB connections in PORD and DR is different.\n";
             last;
           }
         }
@@ -177,7 +177,7 @@ if (defined $options{d}) {
   export_config($env{$options{e}."_host"}, $username, $env{$options{e}."_password"});
   copy('export.tgz',$ENV{'HOME'}."/backup/".$env{$options{e}."_host"}."_".join('-',$day,$mon,$year).".tgz") or die "Couldn't copy Balabit export.tgz to backup\n";
   unpackConfig ($options{e});
-  unlink('export.tar');
+  unlink('export.tgz');
 
   unless (chdir("/home/scbsync/".$options{e}."scb")) {
     mkdir ("/home/scbsync/".$options{e}."scb");
@@ -202,6 +202,10 @@ if (defined $options{d}) {
   compareProdWithDrXML();
 
   rmtree($unpackDir);
+
+  # Delete all dumps
+  system("find /home/scbsync/prodscb/ -type f -mtime +7 -exec rm '{}' ';' &>/dev/null");
+  system("find /home/scbsync/drscb/ -type f -mtime +7 -exec rm '{}' ';' &>/dev/null");
 }
 
 # Syncing config
@@ -216,15 +220,15 @@ if (defined($options{s}) && $options{s} =~ m/(^uat|^prod|^dr),\s*(prod|uat|dr)$/
   export_config($env{$source."_host"}, $username, $env{$source."_password"});
   unpackConfig($source);
 
-  my $rules = "scb_".$dest.".rules";
+  my $rules = "/home/scbsync/scb_".$dest.".rules";
   my $scbxml = $unpackDir."/xml/scb.xml";
 
   system("sed -f $rules -i $scbxml");
   debug(4, "Changing tar content");
   chmod 0644, "$unpackDir/xml/scb.xml";
   chdir("$unpackDir");
-  #system("tar cvfz ../$dest_cfg . > /dev/null 2>&1");
-  system("tar -uf ../export.tar ./xml/scb.xml > /dev/null 2>&1");
+  system("gunzip ../export.tgz");
+  system("tar -uf ../export.tar ./xml/scb.xml --numeric-owner --owner 33 --group 33 > /dev/null 2>&1");
   system("gzip ../export.tar");
   chdir("..");
   copy("export.tar.gz", $dest_cfg) or die "Couldn't copy export.tar.gz to $dest_cfg";
@@ -295,3 +299,4 @@ if (defined($options{s}) && $options{s} =~ m/(^uat|^prod|^dr),\s*(prod|uat|dr)$/
   }
 
 }
+
