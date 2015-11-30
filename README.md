@@ -5,6 +5,6 @@ A simple script I used during the migration of OpenFire from HSQLDB to MySQL and
 ###delete_emcsg.py<br>
 Quick and dirty way to generate EMC SYM CLI commands in the right order to remove a storage group. TDEVs are left intact and you will need to delete them separately.<p>
 ###get_brocade_cmd.pl<br> 
-This script connects to a defined list of Brocade SAN switches, dumps the output of such commands like "switchshow", "cfgshow", etc. (the list could be configured separately),
+This script connects to a defined list of Brocade SAN switches, dumps the output of the commands like "switchshow", "cfgshow", etc. (the list could be configured separately),
 stores it locally and diffs the produced result with the data which were dumped  on the day before.
 Could be quite handy to track the changes in the Brocade’s configuration. 
